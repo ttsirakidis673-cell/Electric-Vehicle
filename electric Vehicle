@@ -1,0 +1,374 @@
+/**********************************************
+UNPHAYZED ELECTRIC CHAMPION KIT CODE 2026-2027
+
+THIS CODE IS NOT LEAGAL FOR COMPETITOR USE PER RULE 3.l
+*********************************************/
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Servo.h>
+
+
+//LCD SETUP------------------------------------
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // Set the LCD I2C address
+
+
+//MOTOR DRIVER PINS+SETUP------------------------------------
+#define IN1 9 // define in1 pin on DRV8833 
+#define IN2 10 // define in2 pin on DRV8833 
+#define POLARITY 1 //Switch to -1 if vehicle traveling in opposite direction as intended
+
+//ENCODER PINS------------------------------------
+#define ENCA 2
+#define ENCB 3
+
+//PUSH BUTTON PINS------------------------------------
+#define StartButtonPin 6
+
+//ENCODER VARIABLES------------------------------------
+volatile unsigned long counter = 0;  //This variable will increase or decrease depending on the rotation of encoder
+volatile unsigned long temp;
+
+//MOVEMENT VARIABLES------------------------------------
+double VehicleLength = 70; //Lend of vehicle from Bottle pusher to MP. This needs to be subtracted fro BL dist to get correct movements.
+double BottleLineDist = 200.00 - VehicleLength; // Distance of the Bottle Line FROM the Target Distance in cm 3m = 300 cm, 5m = 100 cm
+double TargetDistance = 500.00; // Target Distance in cm 9m = 900 cm, 5m = 500 cm
+double wheelDiameter = 5.08; // Wheel Diameter is 2in which equals 5.08 cm
+double EncoderPPR = 1200; // Encoder Pulses Per Rev; Adjust as needed
+double BottleLineSlowDownDistance = TargetDistance + BottleLineDist - 100.00; // Distance at which the vehicle begins to slow down; Adjust as needed
+double TargetSlowDownDistance = TargetDistance + 50.00; // Distance at which the vehicle begins to slow down; Adjust as needed
+
+double wheelCircumfrence = wheelDiameter * 3.14159;
+
+bool SBpressed = false;
+bool moved = false;
+bool slowed = false;
+bool reachedBottleLine = false;
+bool revsersed = false;
+bool slowed2 = false;
+bool reachedTargetDistance = false;
+
+double targetEncoderValue;
+double bottleLineEncoderValue;
+double slowDownEncoderValue1;
+double slowDownEncoderValue2;
+double TargetDistMult;
+double rotations;
+double motorSpeed;
+double minSlowDownEncoderValue;
+double maxSlowDownEncoderValue;
+
+//TIME VARIABLES------------------------------------
+double TimeDelaySec = 5.0; //Time delay after start button is pressed
+
+long startTime;
+long endTime;
+double milisTime;
+double runTime;
+
+
+void setup() {
+
+  Serial.begin(9600);
+  Serial.println("Entered Setup");
+
+  //MOTOR SETUP----------------------------------------------------
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+
+  Serial.println("Motor Setup Complete");
+
+  //LCD SETUP----------------------------------------------------
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0,0);
+  lcd.print("Tgt Dst: ");
+  lcd.setCursor(9, 0);
+  lcd.print(TargetDistance/100.00);
+  lcd.print("m");
+  lcd.setCursor(0,1);
+  lcd.print("BtLn Dst: ");
+  lcd.setCursor(10, 1);
+  lcd.print(BottleLineDist/100.00);
+  lcd.print("m");
+
+
+  Serial.println("LCD Setup Complete");
+
+  //BUTTON SETUP----------------------------------------------------
+
+  pinMode(StartButtonPin, INPUT);
+  digitalWrite(StartButtonPin, HIGH); //enable pullups to make pin high
+
+  Serial.println("Button Setup Complete");
+
+  //ENCODER SETUP----------------------------------------------------
+
+  pinMode(ENCA, INPUT);           // set pin to input
+  pinMode(ENCB, INPUT);           // set pin to input
+  
+  digitalWrite(ENCA, HIGH);       // turn on pullup resistors
+  digitalWrite(ENCB, HIGH);       // turn on pullup resistors
+
+  //Setting up interrupt
+  //A rising pulse from encodenren activated ai0(). AttachInterrupt 0 is DigitalPin nr 2 on moust Arduino.
+  attachInterrupt(0, ai0, RISING);
+  
+  //B rising pulse from encodenren activated ai1(). AttachInterrupt 1 is DigitalPin nr 3 on moust Arduino.
+  attachInterrupt(1, ai1, RISING);
+
+  Serial.println("Encoder Setup Complete");
+
+  //TARGET ENCODER VALUES SETUP----------------------------------------------------
+
+  targetEncoderValue = getEncoderValue(TargetDistance, wheelDiameter);
+  bottleLineEncoderValue = getEncoderValue((TargetDistance+BottleLineDist), wheelDiameter);
+  slowDownEncoderValue1 = getEncoderValue(TargetSlowDownDistance, wheelDiameter);
+  slowDownEncoderValue2 = getEncoderValue(BottleLineSlowDownDistance, wheelDiameter);
+  maxSlowDownEncoderValue = bottleLineEncoderValue * 1.5;
+  minSlowDownEncoderValue = targetEncoderValue * 0.5;
+
+  Serial.println(targetEncoderValue);
+  Serial.println(bottleLineEncoderValue);
+  Serial.println(maxSlowDownEncoderValue);
+
+  Serial.println("Target Values Set");
+
+  //VARIABLE SETUP----------------------------------------------------
+
+  SBpressed = false;
+  moved = false;
+  slowed = false;
+  reachedBottleLine = false;
+  revsersed = false;
+  slowed2 = false;
+  reachedTargetDistance = false;
+
+  Serial.println("Variable Reset Complete");
+
+  Serial.println("Setup Complete");
+
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+
+  if (digitalRead(StartButtonPin) == LOW){
+    Serial.println("Start pressed");
+    moved = false;
+    slowed = false;
+    reachedBottleLine = false;
+    revsersed = false;
+    slowed2 = false;
+    reachedTargetDistance = false;
+
+    counter = 0;
+    startTime = millis();
+    Serial.println(startTime);
+    SBpressed = true;
+    delay(100);
+  }
+
+  if (SBpressed){
+
+    double TimeDel = TimeDelaySec * 1000 - 100;
+    delay (TimeDel);
+
+    motorSpeed = 250;
+
+    if(POLARITY == 1){
+      analogWrite(IN1, 0);
+      analogWrite(IN2, motorSpeed);
+    }
+    else{
+      analogWrite(IN1, motorSpeed);
+      analogWrite(IN2, 0);
+    }
+
+    moved = true;
+    SBpressed = false;
+
+  }
+
+  if (moved){ 
+    //This section of code keeps the motor running until the vehicle reaches the slow down dist
+    if(counter >= slowDownEncoderValue1 && counter < maxSlowDownEncoderValue){
+      Serial.println("Reached Decel Distance");
+      
+      motorSpeed = 100;
+
+    if(POLARITY == 1){
+      analogWrite(IN1, 0);
+      analogWrite(IN2, motorSpeed);
+    }
+    else{
+      analogWrite(IN1, motorSpeed);
+      analogWrite(IN2, 0);
+    }
+
+      slowed = true;
+      moved = false;
+    }
+    
+  }
+
+  if(slowed){
+    if(counter >= bottleLineEncoderValue){
+
+      analogWrite(IN1, 0);
+      analogWrite(IN2, 0);
+
+      if(POLARITY == 1){
+        analogWrite(IN1, 100);
+        analogWrite(IN2, 0);
+      }
+      else{
+        analogWrite(IN1, 0);
+        analogWrite(IN2, 100);
+      }
+      delay(200);
+      analogWrite(IN1, 0);
+      analogWrite(IN2, 0);
+      delay(200);
+
+      reachedBottleLine = true;
+      slowed = false;
+    }
+  }
+    
+  if (reachedBottleLine){
+
+    motorSpeed = 200;
+
+    if(POLARITY == -1){
+      analogWrite(IN1, 0);
+      analogWrite(IN2, motorSpeed);
+    }
+    else{
+      analogWrite(IN1, motorSpeed);
+      analogWrite(IN2, 0);
+    }
+
+    revsersed = true;
+    reachedBottleLine = false;
+
+  }
+
+  if (revsersed){ 
+    //This section of code keeps the motor running until the vehicle reaches the slow down dist
+    if(counter <= slowDownEncoderValue2 && counter > minSlowDownEncoderValue){
+      Serial.println("Reached Decel Distance");
+      
+      motorSpeed = 100;
+
+      if(POLARITY == -1){
+        analogWrite(IN1, 0);
+        analogWrite(IN2, motorSpeed);
+      }
+      else{
+        analogWrite(IN1, motorSpeed);
+        analogWrite(IN2, 0);
+      }
+
+      slowed2 = true;
+      revsersed = false;
+    }
+    
+  }
+
+  if(slowed2){
+    if(counter <= targetEncoderValue){
+
+      analogWrite(IN1, 0);
+      analogWrite(IN2, 0);
+
+      if(POLARITY == -1){
+        analogWrite(IN1, 100);
+        analogWrite(IN2, 0);
+      }
+      else{
+        analogWrite(IN1, 0);
+        analogWrite(IN2, 100);
+      }
+      delay(200);
+      analogWrite(IN1, 0);
+      analogWrite(IN2, 0);
+      delay(200);
+
+      reachedTargetDistance = true;
+      slowed2 = false;
+    }
+  }
+
+  if(reachedTargetDistance){
+    //This section of code records actual dist and time for debugging purposes
+
+    delay(1000); //wait 1 sec to make sure all movement has stopped
+
+    Serial.println("Reached Target Distance Loop");
+    Serial.println(counter);
+
+    //determine distance error from run
+    double finalDist = (counter/EncoderPPR)*wheelDiameter;
+
+    //determine run time
+    endTime = millis();
+    Serial.println(endTime);
+    milisTime = endTime - startTime;
+    runTime = milisTime/1000.00;
+    Serial.println(runTime);
+
+    //print time/dist on LCD
+    lcd.setCursor(0,0);
+    lcd.print("Fin Dist:      m");
+    lcd.setCursor(9, 0);
+    lcd.print(finalDist,3);
+    lcd.setCursor(0,1);
+    lcd.print("Fin Time:      s");
+    lcd.setCursor(9, 1);
+    lcd.print(runTime,3);
+    
+    //reset all bools + counter
+    SBpressed = false;
+    moved = false;
+    slowed = false;
+    reachedBottleLine = false;
+    revsersed = false;
+    slowed2 = false;
+    reachedTargetDistance = false;
+    counter = 0;
+
+  }
+
+}
+
+
+void ai0() {
+  // ai0 is activated if DigitalPin nr 2 is going from LOW to HIGH
+  // Check pin 3 to determine the direction
+  if(digitalRead(3)==LOW) {
+    counter++;
+  }else{
+    counter--;
+  }
+}
+
+void ai1() {
+  // ai0 is activated if DigitalPin nr 3 is going from LOW to HIGH
+  // Check with pin 2 to determine the direction
+  if(digitalRead(2)==LOW) {
+    counter--;
+  }else{
+    counter++;
+  }
+}
+
+double getEncoderValue (double TD, double WD){
+    double WheelCircumfrence = 3.14159 * WD;
+    double tgtENCval = (TD / WheelCircumfrence) * EncoderPPR;
+    return tgtENCval;
+  }
+
