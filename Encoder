@@ -1,0 +1,83 @@
+/**********************************************
+UNPHAYZED ELECTRIC CHAMPION KIT ENCODER CALIBRATION CODE 2026-2027
+*********************************************/
+
+/*
+If your LCD shows nothing or garbage, your I2C address may not be 0x27 -
+try 0x3F, or run an I2C scanner sketch to find the correct address.
+*/
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ---- EASY CONFIG ----
+const uint8_t LCD_ADDRESS = 0x27; // change to 0x3F if display doesn't work
+const uint8_t LCD_COLUMNS = 16;   // change to 20 if you have a 20x4 display
+const uint8_t LCD_ROWS = 2;       // change to 4 if you have a 20x4 display
+// ----------------------
+
+LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLUMNS, LCD_ROWS);
+
+// Encoder connected to digital pin 2 and 3 on the Arduino.
+long counter = 0;  // This variable will increase or decrease depending on the rotation of encoder
+long temp;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(2, INPUT);           // set pin to input
+  pinMode(3, INPUT);           // set pin to input
+
+  digitalWrite(2, HIGH);       // turn on pullup resistors
+  digitalWrite(3, HIGH);       // turn on pullup resistors
+
+  // Setting up interrupt
+  // A rising pulse from encoder activates ai0(). AttachInterrupt 0 is DigitalPin nr 2 on most Arduinos.
+  attachInterrupt(0, ai0, RISING);
+
+  // B rising pulse from encoder activates ai1(). AttachInterrupt 1 is DigitalPin nr 3 on most Arduinos.
+  attachInterrupt(1, ai1, RISING);
+
+  // Set up the LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Counter:");
+  updateLCD(); // show initial value of 0
+}
+
+void loop() {
+  // Send the value of counter whenever it changes
+  if (counter != temp) {
+    Serial.println(counter);
+    updateLCD();
+    temp = counter;
+  }
+}
+
+void updateLCD() {
+  lcd.setCursor(0, 1);       // second row
+  lcd.print("            ");  // clear the row (12 spaces, adjust if using a 20-col display)
+  lcd.setCursor(0, 1);
+  lcd.print(counter);
+}
+
+void ai0() {
+  // ai0 is activated if DigitalPin nr 2 is going from LOW to HIGH
+  // Check pin 3 to determine the direction
+  if (digitalRead(3) == LOW) {
+    counter++;
+  } else {
+    counter--;
+  }
+}
+
+void ai1() {
+  // ai1 is activated if DigitalPin nr 3 is going from LOW to HIGH
+  // Check pin 2 to determine the direction
+  if (digitalRead(2) == LOW) {
+    counter--;
+  } else {
+    counter++;
+  }
+}
